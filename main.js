@@ -49,65 +49,33 @@ function printHtml(ticketHtml) {
     const path2 = require('path');
     const { exec } = require('child_process');
 
-    const fullHtml = `<!DOCTYPE html><html><head><style>
-      * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; }
-      body { padding: 2mm; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; }
-      pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
-      img { display: block; max-width: 100%; margin: 0 auto; }
-      div { text-align: center; }
-    </style></head><body>${ticketHtml}</body></html>`;
+    // Extract plain text from ticketHtml for direct Windows GDI printing
+    // This matches how TicketMaker (VB6/Access) prints - pure Windows GDI, no browser engine
+    const plainText = ticketHtml
+      .replace(/<div[^>]*>/gi, '')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<img[^>]*>/gi, '')
+      .replace(/<pre[^>]*>/gi, '')
+      .replace(/<\/pre>/gi, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&#10;/g, '\n');
 
-    const tmpFile = path2.join(os.tmpdir(), 'gateclerk_print_' + Date.now() + '.html');
-    fs.writeFileSync(tmpFile, fullHtml, 'utf8');
+    const tmpFile = path2.join(os.tmpdir(), 'gateclerk_print_' + Date.now() + '.txt');
+    fs.writeFileSync(tmpFile, plainText + '\r\n\r\n\r\n\r\n', 'utf8');
 
-    // Try Chrome first, then Edge (built into all Windows 10/11), then Electron fallback
-    const browserPaths = [
-      // Chrome
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe',
-      // Microsoft Edge - built into Windows 10/11
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-      // Firefox
-      'C:\\Program Files\\Mozilla Firefox\\firefox.exe',
-      'C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe',
-    ];
-
-    let browserPath = null;
-    for (const p of browserPaths) {
-      try { if (p && fs.existsSync(p)) { browserPath = p; break; } } catch(e) {}
-    }
-
-    if (browserPath) {
-      // Firefox uses different flags
-      const isFirefox = browserPath.toLowerCase().includes('firefox');
-      const cmd = isFirefox
-        ? `"${browserPath}" -print "${tmpFile}"`
-        : `"${browserPath}" --headless=new --kiosk-printing --print-to-default-printer "${tmpFile}"`;
-      exec(cmd, (error) => {
-        setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 8000);
-        resolve({ success: true });
-      });
-    } else {
-      // Last resort - Electron webContents.print
-      const printWin = new BrowserWindow({
-        width: 400, height: 1200, show: false,
-        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
-      });
-      printWin.loadFile(tmpFile);
-      printWin.webContents.once('did-finish-load', () => {
-        printWin.webContents.print(
-          { silent: true, printBackground: false, deviceName: '', margins: { marginType: 'none' } },
-          (success, errorType) => {
-            printWin.destroy();
-            setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 2000);
-            resolve(success ? { success: true } : { success: false, error: errorType });
-          }
-        );
-      });
-    }
+    // Print text file directly via Windows print command — pure GDI, no browser
+    // Same print path as VB6/Access applications like TicketMaker
+    exec(`print /D:"${require('os').hostname()}" "${tmpFile}"`, (error) => {
+      // Also try without hostname if that fails
+      if (error) {
+        exec(`print "${tmpFile}"`, () => {});
+      }
+      setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 8000);
+      resolve({ success: true });
+    });
   });
 }
 
