@@ -1,0 +1,55 @@
+{
+  "name": "gateclerk-terminal",
+  "version": "1.0.0",
+  "description": "GateClerk Gate Terminal",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "build:unsigned": "electron-builder --win --x64 --config.win.sign=false"
+  },
+  "build": {
+    "appId": "com.gateclerk.terminal",
+    "productName": "GateClerk",
+    "copyright": "Copyright © 2026 StormPay Inc.",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "GateClerk"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "4473PRO",
+      "repo": "gateclerk-terminal"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7",
+    "pdf-to-printer": "^5.4.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  }
+}
