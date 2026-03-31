@@ -47,9 +47,9 @@ function printHtml(ticketHtml) {
     });
 
     const fullHtml = `<!DOCTYPE html><html><head><style>
-      @page { size: 80mm auto; margin: 2mm; }
+      @page { size: 80mm auto; margin: 0; }
       * { box-sizing: border-box; }
-      body { margin: 0; padding: 0; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; }
+      body { margin: 2mm; padding: 0; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; width: 72mm; }
       pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
       img { display: block; max-width: 100%; margin: 0 auto; }
       div { text-align: center; }
@@ -60,8 +60,8 @@ function printHtml(ticketHtml) {
     printWin.webContents.once('did-finish-load', () => {
       printWin.webContents.print(
         { silent: true, printBackground: false, deviceName: '',
-          margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
-          pageSize: { width: 80000, height: 297000 } },
+          margins: { marginType: 'none' },
+          pageSize: { width: 80000, height: 2000000 } },
         (success, errorType) => {
           printWin.destroy();
           resolve(success ? { success: true } : { success: false, error: errorType });
@@ -137,8 +137,8 @@ function createWindow() {
     isClosing = true;
 
     const currentUrl = mainWindow.webContents.getURL();
-    const isRegister = currentUrl.includes('/r/');
-    const isGate = currentUrl.includes('/g/');
+    const isRegister = currentUrl.includes('/r/') || currentUrl.includes('/register/');
+    const isGate = currentUrl.includes('/g/') || currentUrl.includes('/terminal/gate') || currentUrl.includes('gate.html');
 
     try {
       if (isRegister) {
