@@ -3,6 +3,10 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 
+// Enable kiosk printing — same as Chrome --kiosk-printing flag
+// This makes Electron use the printer's default paper size, identical to Chrome behavior
+app.commandLine.appendSwitch('kiosk-printing');
+
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) { app.quit(); }
 
@@ -47,10 +51,9 @@ function printHtml(ticketHtml) {
     });
 
     const fullHtml = `<!DOCTYPE html><html><head><style>
-      @page { size: 80mm auto; margin: 0; }
       * { box-sizing: border-box; }
-      html { margin: 0; padding: 0; }
-      body { margin: 0; padding: 2mm; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; width: 76mm; overflow: hidden; }
+      html, body { margin: 0; padding: 0; }
+      body { padding: 2mm; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; }
       pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
       img { display: block; max-width: 100%; margin: 0 auto; }
       div { text-align: center; }
@@ -59,29 +62,14 @@ function printHtml(ticketHtml) {
     printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
 
     printWin.webContents.once('did-finish-load', () => {
-      printWin.webContents.executeJavaScript('document.documentElement.scrollHeight').then(contentHeight => {
-        // Convert px to microns at 96dpi, add generous 20mm buffer
-        const heightMicrons = Math.ceil(contentHeight * 264.583) + 20000;
-        printWin.webContents.print(
-          { silent: true, printBackground: false, deviceName: '',
-            margins: { marginType: 'none' },
-            pageSize: { width: 80000, height: heightMicrons } },
-          (success, errorType) => {
-            printWin.destroy();
-            resolve(success ? { success: true } : { success: false, error: errorType });
-          }
-        );
-      }).catch(() => {
-        printWin.webContents.print(
-          { silent: true, printBackground: false, deviceName: '',
-            margins: { marginType: 'none' },
-            pageSize: { width: 80000, height: 150000 } },
-          (success, errorType) => {
-            printWin.destroy();
-            resolve(success ? { success: true } : { success: false, error: errorType });
-          }
-        );
-      });
+      printWin.webContents.print(
+        { silent: true, printBackground: false, deviceName: '',
+          margins: { marginType: 'none' } },
+        (success, errorType) => {
+          printWin.destroy();
+          resolve(success ? { success: true } : { success: false, error: errorType });
+        }
+      );
     });
 
     setTimeout(() => {
