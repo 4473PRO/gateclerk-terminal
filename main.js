@@ -136,11 +136,12 @@ function createWindow() {
     e.preventDefault();
     isClosing = true;
 
-    const config = getSavedConfig();
-    const terminalType = config ? config.type : 'gate';
+    const currentUrl = mainWindow.webContents.getURL();
+    const isRegister = currentUrl.includes('/r/');
+    const isGate = currentUrl.includes('/g/');
 
     try {
-      if (terminalType === 'register') {
+      if (isRegister) {
         // ── REGISTER Z-TAPE ──
         const regData = await mainWindow.webContents.executeJavaScript(`
           (function() {
@@ -204,7 +205,7 @@ function createWindow() {
           `).catch(() => {});
         }
 
-      } else {
+      } else if (isGate) {
         // ── GATE TERMINAL Z-TAPE ──
         const sessionData = await mainWindow.webContents.executeJavaScript(`
           (function() {
