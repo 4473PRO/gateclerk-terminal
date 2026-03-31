@@ -45,10 +45,9 @@ autoUpdater.on('error', (err) => { console.error('Auto-updater error:', err); })
 // ── PRINT FUNCTION (reusable) ──
 function printHtml(ticketHtml) {
   return new Promise((resolve) => {
-    const printWin = new BrowserWindow({
-      width: 400, height: 1200, show: false,
-      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false }
-    });
+    const os = require('os');
+    const path2 = require('path');
+    const { exec } = require('child_process');
 
     const fullHtml = `<!DOCTYPE html><html><head><style>
       * { box-sizing: border-box; }
@@ -59,18 +58,56 @@ function printHtml(ticketHtml) {
       div { text-align: center; }
     </style></head><body>${ticketHtml}</body></html>`;
 
-    printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
+    const tmpFile = path2.join(os.tmpdir(), 'gateclerk_print_' + Date.now() + '.html');
+    fs.writeFileSync(tmpFile, fullHtml, 'utf8');
 
-    printWin.webContents.once('did-finish-load', () => {
-      printWin.webContents.print(
-        { silent: true, printBackground: false, deviceName: '',
-          margins: { marginType: 'none' } },
-        (success, errorType) => {
-          printWin.destroy();
-          resolve(success ? { success: true } : { success: false, error: errorType });
-        }
-      );
-    });
+    // Try Chrome first, then Edge (built into all Windows 10/11), then Electron fallback
+    const browserPaths = [
+      // Chrome
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe',
+      // Microsoft Edge - built into Windows 10/11
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      // Firefox
+      'C:\\Program Files\\Mozilla Firefox\\firefox.exe',
+      'C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe',
+    ];
+
+    let browserPath = null;
+    for (const p of browserPaths) {
+      try { if (p && fs.existsSync(p)) { browserPath = p; break; } } catch(e) {}
+    }
+
+    if (browserPath) {
+      // Firefox uses different flags
+      const isFirefox = browserPath.toLowerCase().includes('firefox');
+      const cmd = isFirefox
+        ? `"${browserPath}" -print "${tmpFile}"`
+        : `"${browserPath}" --headless=new --kiosk-printing --print-to-default-printer "${tmpFile}"`;
+      exec(cmd, (error) => {
+        setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 8000);
+        resolve({ success: true });
+      });
+    } else {
+      // Last resort - Electron webContents.print
+      const printWin = new BrowserWindow({
+        width: 400, height: 1200, show: false,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
+      });
+      printWin.loadFile(tmpFile);
+      printWin.webContents.once('did-finish-load', () => {
+        printWin.webContents.print(
+          { silent: true, printBackground: false, deviceName: '', margins: { marginType: 'none' } },
+          (success, errorType) => {
+            printWin.destroy();
+            setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 2000);
+            resolve(success ? { success: true } : { success: false, error: errorType });
+          }
+        );
+      });
+    }
 
     setTimeout(() => {
       if (!printWin.isDestroyed()) {
