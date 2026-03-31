@@ -9,17 +9,29 @@ if (!gotTheLock) { app.quit(); }
 let mainWindow = null;
 let isClosing = false;
 
-function getShortcodePath() {
-  return path.join(app.getPath('userData'), 'shortcode.txt');
+function getConfigPath() {
+  return path.join(app.getPath('userData'), 'config.json');
 }
-function getSavedShortcode() {
+
+function getSavedConfig() {
   try {
-    const sc = fs.readFileSync(getShortcodePath(), 'utf8').trim();
-    return sc || null;
-  } catch(e) { return null; }
+    const raw = fs.readFileSync(getConfigPath(), 'utf8').trim();
+    const cfg = JSON.parse(raw);
+    if (cfg.shortcode) return cfg;
+    return null;
+  } catch(e) {
+    // Legacy: try old shortcode.txt
+    try {
+      const legacyPath = path.join(app.getPath('userData'), 'shortcode.txt');
+      const sc = fs.readFileSync(legacyPath, 'utf8').trim();
+      if (sc) return { shortcode: sc, type: 'gate' };
+    } catch(e2) {}
+    return null;
+  }
 }
-function saveShortcode(shortcode) {
-  fs.writeFileSync(getShortcodePath(), shortcode.trim(), 'utf8');
+
+function saveConfig(shortcode, type) {
+  fs.writeFileSync(getConfigPath(), JSON.stringify({ shortcode: shortcode.trim(), type: type || 'gate' }), 'utf8');
 }
 
 autoUpdater.autoDownload = true;
@@ -57,7 +69,6 @@ function printHtml(ticketHtml) {
       );
     });
 
-    // Timeout fallback
     setTimeout(() => {
       if (!printWin.isDestroyed()) {
         printWin.destroy();
@@ -67,8 +78,14 @@ function printHtml(ticketHtml) {
   });
 }
 
+function centerText(text, width) {
+  text = String(text).substring(0, width);
+  const pad = Math.max(0, Math.floor((width - text.length) / 2));
+  return ' '.repeat(pad) + text;
+}
+
 function createWindow() {
-  const shortcode = getSavedShortcode();
+  const config = getSavedConfig();
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -89,8 +106,8 @@ function createWindow() {
     show: false
   });
 
-  if (shortcode) {
-    mainWindow.loadURL(`https://gateclerk.com/g/${shortcode}`);
+  if (config) {
+    mainWindow.loadURL(`https://gateclerk.com/chooser/${config.shortcode}`);
   } else {
     mainWindow.loadFile(path.join(__dirname, 'setup.html'));
   }
@@ -113,154 +130,217 @@ function createWindow() {
     }
   });
 
-  // ── INTERCEPT CLOSE — print Z-tape then close ──
+  // ── INTERCEPT CLOSE — detect terminal type and print appropriate Z-tape ──
   mainWindow.on('close', async (e) => {
-    if (isClosing) return; // Already in close sequence — allow it
+    if (isClosing) return;
     e.preventDefault();
     isClosing = true;
 
+    const config = getSavedConfig();
+    const terminalType = config ? config.type : 'gate';
+
     try {
-      // Ask renderer for session data
-      const sessionData = await mainWindow.webContents.executeJavaScript(`
-        (function() {
-          try {
-            const terminalToken = localStorage.getItem('gc_terminal_token');
-            if (!terminalToken) return null; // Not logged into a gate — no Z needed
+      if (terminalType === 'register') {
+        // ── REGISTER Z-TAPE ──
+        const regData = await mainWindow.webContents.executeJavaScript(`
+          (function() {
+            try {
+              const saved = JSON.parse(localStorage.getItem('gc_register_session') || 'null');
+              if (!saved || !saved.regToken) return null;
+              return {
+                venueName: saved.venueName || 'GATECLERK',
+                registerName: saved.registerName || 'REGISTER',
+                sessionId: saved.sessionId,
+                cashTotal: window._sessionCashTotal || 0,
+                cardTotal: window._sessionCardTotal || 0,
+                saleCount: window._sessionSaleCount || 0
+              };
+            } catch(e) { return null; }
+          })()
+        `);
 
-            const sessionSales = JSON.parse(localStorage.getItem(
-              'gc_session_sales_' + localStorage.getItem('gc_terminal_id') + '_' + new Date().toISOString().split('T')[0]
-            ) || '{}');
+        if (regData) {
+          const now = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+          const sessionTotal = regData.cashTotal + regData.cardTotal;
+          const zLines = [
+            `================================`,
+            centerText('*** Z TAPE ***', 32),
+            centerText('END OF SESSION REPORT', 32),
+            `================================`,
+            centerText(regData.venueName, 32),
+            centerText(regData.registerName, 32),
+            `  ${now}`,
+            `================================`,
+            `  TOTAL SALES:       ${regData.saleCount}`,
+            `  CASH TOTAL:        $${regData.cashTotal.toFixed(2)}`,
+            `  CARD TOTAL:        $${regData.cardTotal.toFixed(2)}`,
+            `================================`,
+            centerText('SESSION TOTAL', 32),
+            centerText(`$${sessionTotal.toFixed(2)}`, 32),
+            `================================`,
+            ``, ``, ``, ``
+          ].join('\n');
 
-            const entries = Object.values(sessionSales);
-            let totalTickets = 0, cashTotal = 0, cardTotal = 0;
-            entries.forEach(s => {
-              totalTickets += (s.cashQty || 0) + (s.cardQty || 0);
-              cashTotal += s.cashTotal || 0;
-              cardTotal += s.cardTotal || 0;
-            });
+          if (regData.sessionId) {
+            mainWindow.webContents.executeJavaScript(`
+              fetch('https://gateclerk-api.onrender.com/register/logout-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  session_id: '${regData.sessionId}',
+                  sale_count: ${regData.saleCount},
+                  cash_total: ${regData.cashTotal},
+                  card_total: ${regData.cardTotal}
+                })
+              }).catch(() => {});
+            `).catch(() => {});
+          }
 
-            return {
-              entries,
-              totalTickets,
-              cashTotal,
-              cardTotal,
-              terminalName: localStorage.getItem('gc_terminal_name') || 'GATE',
-              venueName: localStorage.getItem('gc_terminal_venue_name') || 'GATECLERK',
-              sessionId: localStorage.getItem('gc_gate_session_id'),
-              eventId: window.selectedEventId || null
-            };
-          } catch(e) { return null; }
-        })()
-      `);
+          await printHtml(`<pre>${zLines}</pre>`);
 
-      if (sessionData && sessionData.totalTickets >= 0 && sessionData.terminalName) {
-        // Build Z-tape HTML
-        const now = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
-        const sessionTotal = sessionData.cashTotal + sessionData.cardTotal;
-
-        function centerText(text, width) {
-          text = String(text).substring(0, width);
-          const pad = Math.max(0, Math.floor((width - text.length) / 2));
-          return ' '.repeat(pad) + text;
-        }
-
-        let ticketLines = '';
-        if (sessionData.entries.length === 0) {
-          ticketLines = '  No sales this session.\n';
-        } else {
-          sessionData.entries.forEach(s => {
-            const qty = (s.cashQty || 0) + (s.cardQty || 0);
-            const total = (s.cashTotal || 0) + (s.cardTotal || 0);
-            ticketLines += `  ${(s.name || 'Ticket').substring(0, 18).padEnd(18)} x${qty}  $${total.toFixed(2)}\n`;
-            if (s.cashQty > 0) ticketLines += `    Cash: ${s.cashQty} tickets  $${(s.cashTotal||0).toFixed(2)}\n`;
-            if (s.cardQty > 0) ticketLines += `    Card: ${s.cardQty} tickets  $${(s.cardTotal||0).toFixed(2)}\n`;
-          });
-        }
-
-        const zLines = [
-          `================================`,
-          centerText('*** Z TAPE ***', 32),
-          centerText('END OF SESSION REPORT', 32),
-          `================================`,
-          centerText(sessionData.venueName, 32),
-          centerText(sessionData.terminalName, 32),
-          `  ${now}`,
-          `================================`,
-          `  TICKET BREAKDOWN`,
-          `================================`,
-          ticketLines.trimEnd(),
-          `================================`,
-          `  TOTAL TICKETS:    ${sessionData.totalTickets}`,
-          `  CASH TOTAL:       $${sessionData.cashTotal.toFixed(2)}`,
-          `  CARD TOTAL:       $${sessionData.cardTotal.toFixed(2)}`,
-          `================================`,
-          centerText('SESSION TOTAL', 32),
-          centerText(`$${sessionTotal.toFixed(2)}`, 32),
-          `================================`,
-          ``, ``, ``, ``
-        ].join('\n');
-
-        // Log session to server via renderer
-        if (sessionData.sessionId) {
+          // Clear register session
           mainWindow.webContents.executeJavaScript(`
-            fetch('https://gateclerk-api.onrender.com/terminal/logout-session', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                session_id: '${sessionData.sessionId}',
-                event_id: ${sessionData.eventId ? `'${sessionData.eventId}'` : 'null'},
-                ticket_count: ${sessionData.totalTickets},
-                cash_total: ${sessionData.cashTotal},
-                card_total: ${sessionData.cardTotal}
-              })
-            }).catch(() => {});
+            try { localStorage.removeItem('gc_register_session'); } catch(e) {}
           `).catch(() => {});
         }
 
-        // Print Z-tape silently
-        await printHtml(`<pre>${zLines}</pre>`);
+      } else {
+        // ── GATE TERMINAL Z-TAPE ──
+        const sessionData = await mainWindow.webContents.executeJavaScript(`
+          (function() {
+            try {
+              const terminalToken = localStorage.getItem('gc_terminal_token');
+              if (!terminalToken) return null;
+              const sessionSales = JSON.parse(localStorage.getItem(
+                'gc_session_sales_' + localStorage.getItem('gc_terminal_id') + '_' + new Date().toISOString().split('T')[0]
+              ) || '{}');
+              const entries = Object.values(sessionSales);
+              let totalTickets = 0, cashTotal = 0, cardTotal = 0;
+              entries.forEach(s => {
+                totalTickets += (s.cashQty || 0) + (s.cardQty || 0);
+                cashTotal += s.cashTotal || 0;
+                cardTotal += s.cardTotal || 0;
+              });
+              return {
+                entries, totalTickets, cashTotal, cardTotal,
+                terminalName: localStorage.getItem('gc_terminal_name') || 'GATE',
+                venueName: localStorage.getItem('gc_terminal_venue_name') || 'GATECLERK',
+                sessionId: localStorage.getItem('gc_gate_session_id'),
+                eventId: window.selectedEventId || null
+              };
+            } catch(e) { return null; }
+          })()
+        `);
+
+        if (sessionData && sessionData.terminalName) {
+          const now = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+          const sessionTotal = sessionData.cashTotal + sessionData.cardTotal;
+
+          let ticketLines = '';
+          if (sessionData.entries.length === 0) {
+            ticketLines = '  No sales this session.\n';
+          } else {
+            sessionData.entries.forEach(s => {
+              const qty = (s.cashQty || 0) + (s.cardQty || 0);
+              const total = (s.cashTotal || 0) + (s.cardTotal || 0);
+              ticketLines += `  ${(s.name || 'Ticket').substring(0, 18).padEnd(18)} x${qty}  $${total.toFixed(2)}\n`;
+              if (s.cashQty > 0) ticketLines += `    Cash: ${s.cashQty} tickets  $${(s.cashTotal||0).toFixed(2)}\n`;
+              if (s.cardQty > 0) ticketLines += `    Card: ${s.cardQty} tickets  $${(s.cardTotal||0).toFixed(2)}\n`;
+            });
+          }
+
+          const zLines = [
+            `================================`,
+            centerText('*** Z TAPE ***', 32),
+            centerText('END OF SESSION REPORT', 32),
+            `================================`,
+            centerText(sessionData.venueName, 32),
+            centerText(sessionData.terminalName, 32),
+            `  ${now}`,
+            `================================`,
+            `  TICKET BREAKDOWN`,
+            `================================`,
+            ticketLines.trimEnd(),
+            `================================`,
+            `  TOTAL TICKETS:    ${sessionData.totalTickets}`,
+            `  CASH TOTAL:       $${sessionData.cashTotal.toFixed(2)}`,
+            `  CARD TOTAL:       $${sessionData.cardTotal.toFixed(2)}`,
+            `================================`,
+            centerText('SESSION TOTAL', 32),
+            centerText(`$${sessionTotal.toFixed(2)}`, 32),
+            `================================`,
+            ``, ``, ``, ``
+          ].join('\n');
+
+          if (sessionData.sessionId) {
+            mainWindow.webContents.executeJavaScript(`
+              fetch('https://gateclerk-api.onrender.com/terminal/logout-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  session_id: '${sessionData.sessionId}',
+                  event_id: ${sessionData.eventId ? `'${sessionData.eventId}'` : 'null'},
+                  ticket_count: ${sessionData.totalTickets},
+                  cash_total: ${sessionData.cashTotal},
+                  card_total: ${sessionData.cardTotal}
+                })
+              }).catch(() => {});
+            `).catch(() => {});
+          }
+
+          await printHtml(`<pre>${zLines}</pre>`);
+
+          mainWindow.webContents.executeJavaScript(`
+            try {
+              const termId = localStorage.getItem('gc_terminal_id');
+              const today = new Date().toISOString().split('T')[0];
+              localStorage.removeItem('gc_session_sales_' + termId + '_' + today);
+              localStorage.removeItem('gc_gate_session_id');
+              localStorage.removeItem('gc_terminal_token');
+              localStorage.removeItem('gc_terminal_id');
+              localStorage.removeItem('gc_terminal_name');
+              localStorage.removeItem('gc_terminal_account_id');
+              localStorage.removeItem('gc_terminal_venue_name');
+              localStorage.removeItem('gc_terminal_logo_url');
+              localStorage.removeItem('gc_terminal_shortcode');
+            } catch(e) {}
+          `).catch(() => {});
+        }
       }
     } catch(err) {
       console.error('Close Z-tape error:', err);
     }
 
-    // Clear localStorage
-    mainWindow.webContents.executeJavaScript(`
-      try {
-        const termId = localStorage.getItem('gc_terminal_id');
-        const today = new Date().toISOString().split('T')[0];
-        localStorage.removeItem('gc_session_sales_' + termId + '_' + today);
-        localStorage.removeItem('gc_gate_session_id');
-        localStorage.removeItem('gc_terminal_token');
-        localStorage.removeItem('gc_terminal_id');
-        localStorage.removeItem('gc_terminal_name');
-        localStorage.removeItem('gc_terminal_account_id');
-        localStorage.removeItem('gc_terminal_venue_name');
-        localStorage.removeItem('gc_terminal_logo_url');
-        localStorage.removeItem('gc_terminal_shortcode');
-      } catch(e) {}
-    `).catch(() => {});
-
-    // Now actually close
     mainWindow.destroy();
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+ipcMain.handle('save-config', (event, shortcode, type) => {
+  saveConfig(shortcode, type);
+  if (mainWindow) { mainWindow.loadURL(`https://gateclerk.com/chooser/${shortcode}`); }
+  return { success: true };
+});
+
+// Legacy support
 ipcMain.handle('save-shortcode', (event, shortcode) => {
-  saveShortcode(shortcode);
-  if (mainWindow) { mainWindow.loadURL(`https://gateclerk.com/g/${shortcode}`); }
+  saveConfig(shortcode, 'gate');
+  if (mainWindow) { mainWindow.loadURL(`https://gateclerk.com/chooser/${shortcode}`); }
   return { success: true };
 });
 
 ipcMain.handle('reset-shortcode', () => {
-  try { fs.unlinkSync(getShortcodePath()); } catch(e) {}
+  try { fs.unlinkSync(getConfigPath()); } catch(e) {}
+  try { fs.unlinkSync(path.join(app.getPath('userData'), 'shortcode.txt')); } catch(e) {}
   if (mainWindow) { mainWindow.loadFile(path.join(__dirname, 'setup.html')); }
   return { success: true };
 });
 
-ipcMain.handle('get-shortcode', () => { return getSavedShortcode(); });
+ipcMain.handle('get-shortcode', () => {
+  const cfg = getSavedConfig();
+  return cfg ? cfg.shortcode : null;
+});
 
 ipcMain.handle('print-ticket', async (event, ticketHtml) => {
   return printHtml(ticketHtml);
@@ -272,7 +352,6 @@ ipcMain.handle('get-printers', async () => {
   return printers.map(p => ({ name: p.name, isDefault: p.isDefault }));
 });
 
-// ── IPC: CONFIRM CLOSE (called from renderer after signOut completes) ──
 ipcMain.handle('confirm-close', () => {
   if (mainWindow) { mainWindow.destroy(); }
 });
