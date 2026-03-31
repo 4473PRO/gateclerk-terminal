@@ -108,13 +108,6 @@ function printHtml(ticketHtml) {
         );
       });
     }
-
-    setTimeout(() => {
-      if (!printWin.isDestroyed()) {
-        printWin.destroy();
-        resolve({ success: false, error: 'timeout' });
-      }
-    }, 10000);
   });
 }
 
