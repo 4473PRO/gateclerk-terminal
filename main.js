@@ -42,14 +42,15 @@ autoUpdater.on('error', (err) => { console.error('Auto-updater error:', err); })
 function printHtml(ticketHtml) {
   return new Promise((resolve) => {
     const printWin = new BrowserWindow({
-      width: 400, height: 600, show: false,
+      width: 302, height: 800, show: false,
       webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false }
     });
 
     const fullHtml = `<!DOCTYPE html><html><head><style>
       @page { size: 80mm auto; margin: 0; }
       * { box-sizing: border-box; }
-      body { margin: 2mm; padding: 0; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; width: 72mm; }
+      html { margin: 0; padding: 0; }
+      body { margin: 0; padding: 2mm; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; width: 76mm; overflow: hidden; }
       pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
       img { display: block; max-width: 100%; margin: 0 auto; }
       div { text-align: center; }
@@ -58,15 +59,29 @@ function printHtml(ticketHtml) {
     printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
 
     printWin.webContents.once('did-finish-load', () => {
-      printWin.webContents.print(
-        { silent: true, printBackground: false, deviceName: '',
-          margins: { marginType: 'none' },
-          pageSize: { width: 80000, height: 2000000 } },
-        (success, errorType) => {
-          printWin.destroy();
-          resolve(success ? { success: true } : { success: false, error: errorType });
-        }
-      );
+      printWin.webContents.executeJavaScript('document.body.scrollHeight').then(contentHeight => {
+        // Convert px to microns (1px = 264.583 microns at 96dpi)
+        const heightMicrons = Math.ceil(contentHeight * 264.583) + 5000; // add 5mm buffer
+        printWin.webContents.print(
+          { silent: true, printBackground: false, deviceName: '',
+            margins: { marginType: 'none' },
+            pageSize: { width: 80000, height: heightMicrons } },
+          (success, errorType) => {
+            printWin.destroy();
+            resolve(success ? { success: true } : { success: false, error: errorType });
+          }
+        );
+      }).catch(() => {
+        printWin.webContents.print(
+          { silent: true, printBackground: false, deviceName: '',
+            margins: { marginType: 'none' },
+            pageSize: { width: 80000, height: 150000 } },
+          (success, errorType) => {
+            printWin.destroy();
+            resolve(success ? { success: true } : { success: false, error: errorType });
+          }
+        );
+      });
     });
 
     setTimeout(() => {
