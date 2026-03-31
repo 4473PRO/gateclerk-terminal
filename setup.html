@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>GateClerk Setup</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;700;800;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0a0a0a;
+      color: #fff;
+      font-family: 'Barlow', sans-serif;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .setup-box {
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 48px 40px;
+      width: 480px;
+      text-align: center;
+    }
+    .logo {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 36px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .logo span { color: #f5c518; }
+    .logo-flag {
+      display: inline-grid;
+      grid-template-columns: repeat(4, 8px);
+      gap: 1px;
+      margin-right: 10px;
+      vertical-align: middle;
+      margin-bottom: 4px;
+    }
+    .logo-flag span {
+      width: 8px; height: 8px; border-radius: 1px;
+      display: inline-block;
+    }
+    .logo-flag span:nth-child(odd) { background: #fff; }
+    .logo-flag span:nth-child(even) { background: #333; }
+    .subtitle {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 36px;
+      line-height: 1.6;
+    }
+    .label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #aaa;
+      text-align: left;
+      display: block;
+      margin-bottom: 8px;
+    }
+    input {
+      width: 100%;
+      background: #1c1c1c;
+      border: 2px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 22px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      color: #fff;
+      text-align: center;
+      letter-spacing: .06em;
+      outline: none;
+      transition: border-color .2s;
+      margin-bottom: 8px;
+    }
+    input:focus { border-color: #f5c518; }
+    input::placeholder { color: #444; font-weight: 400; font-size: 18px; }
+    .hint {
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 28px;
+      text-align: left;
+    }
+    .btn {
+      width: 100%;
+      background: #f5c518;
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      padding: 16px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 22px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .btn:hover { background: #ffd32a; }
+    .btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+    .error {
+      background: rgba(239,68,68,.1);
+      border: 1px solid rgba(239,68,68,.3);
+      color: #fca5a5;
+      font-size: 13px;
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="setup-box">
+    <div class="logo">
+      <div class="logo-flag">
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+      </div>
+      Gate<span>Clerk</span>
+    </div>
+    <p class="subtitle">Welcome! Enter your venue shortcode to get started.<br/>Your track manager can provide this.</p>
+
+    <label class="label">Venue Shortcode</label>
+    <input type="text" id="shortcodeInput" placeholder="e.g. clarksvillespeedway" autocomplete="off" spellcheck="false" />
+    <div class="hint">Find your shortcode in GateClerk Settings → Shortcode</div>
+
+    <div class="error" id="errorMsg"></div>
+
+    <button class="btn" id="saveBtn" onclick="saveShortcode()">Launch Gate Terminal →</button>
+  </div>
+
+  <script>
+    const input = document.getElementById('shortcodeInput');
+    const errorMsg = document.getElementById('errorMsg');
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveShortcode();
+    });
+
+    input.focus();
+
+    async function saveShortcode() {
+      const raw = input.value.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+      if (!raw) {
+        showError('Please enter your venue shortcode.');
+        return;
+      }
+
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      btn.textContent = 'Checking...';
+      errorMsg.style.display = 'none';
+
+      // Verify the shortcode exists
+      try {
+        const res = await fetch(`https://gateclerk.com/g/${raw}`, { method: 'HEAD' });
+        // Any response means the URL is reachable — save it
+        window.electronAPI.saveShortcode(raw);
+      } catch(e) {
+        // Network error — save anyway, they may be offline
+        window.electronAPI.saveShortcode(raw);
+      }
+    }
+
+    function showError(msg) {
+      errorMsg.textContent = msg;
+      errorMsg.style.display = 'block';
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = false;
+      btn.textContent = 'Launch Gate Terminal →';
+    }
+  </script>
+</body>
+</html>

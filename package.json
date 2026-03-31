@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --x64",
-    "build:unsigned": "electron-builder --win --x64 --config.win.sign=false"
+    "build:unsigned": "electron-builder --win --x64"
   },
   "build": {
     "appId": "com.gateclerk.terminal",
@@ -18,11 +18,13 @@
     "files": [
       "main.js",
       "preload.js",
+      "setup.html",
       "assets/**/*",
       "node_modules/**/*",
       "package.json"
     ],
     "win": {
+      "forceCodeSigning": false,
       "target": [
         {
           "target": "nsis",

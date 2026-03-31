@@ -1,164 +1,290 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
+const fs = require('fs');
 
-// ── SINGLE INSTANCE LOCK ──
 const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
-  app.quit();
-}
+if (!gotTheLock) { app.quit(); }
 
 let mainWindow = null;
+let isClosing = false;
 
-// ── AUTO UPDATER CONFIG ──
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
-
-autoUpdater.on('update-available', () => {
-  console.log('Update available — downloading...');
-});
-
-autoUpdater.on('update-downloaded', () => {
-  // Silently install on next quit
-  console.log('Update downloaded — will install on next restart.');
-});
-
-autoUpdater.on('error', (err) => {
-  console.error('Auto-updater error:', err);
-});
-
-// ── CREATE WINDOW ──
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 800,
-    minHeight: 600,
-    fullscreen: false,
-    title: 'GateClerk',
-    backgroundColor: '#0a0a0a',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true
-    },
-    icon: path.join(__dirname, 'assets', 'icon.ico'),
-    show: false // Don't show until ready
-  });
-
-  // Load the gate login screen
-  mainWindow.loadURL('https://gateclerk.com/g/');
-
-  // Show window when ready to avoid white flash
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-    mainWindow.focus();
-  });
-
-  // Handle external links — open in default browser, not in the app
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    require('electron').shell.openExternal(url);
-    return { action: 'deny' };
-  });
-
-  // Prevent navigation away from gateclerk.com
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    const allowed = url.startsWith('https://gateclerk.com');
-    if (!allowed) {
-      event.preventDefault();
-      console.log('Blocked navigation to:', url);
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+function getShortcodePath() {
+  return path.join(app.getPath('userData'), 'shortcode.txt');
+}
+function getSavedShortcode() {
+  try {
+    const sc = fs.readFileSync(getShortcodePath(), 'utf8').trim();
+    return sc || null;
+  } catch(e) { return null; }
+}
+function saveShortcode(shortcode) {
+  fs.writeFileSync(getShortcodePath(), shortcode.trim(), 'utf8');
 }
 
-// ── PRINT HANDLER ──
-// Called from renderer via ipcRenderer.invoke('print-ticket', ticketHtml)
-ipcMain.handle('print-ticket', async (event, ticketHtml) => {
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.on('error', (err) => { console.error('Auto-updater error:', err); });
+
+// ── PRINT FUNCTION (reusable) ──
+function printHtml(ticketHtml) {
   return new Promise((resolve) => {
-    // Create a hidden browser window to render and print the ticket
     const printWin = new BrowserWindow({
-      width: 400,
-      height: 600,
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true
-      }
+      width: 400, height: 600, show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false }
     });
 
-    const fullHtml = `<!DOCTYPE html>
-<html>
-<head>
-<style>
-  @page { size: 80mm auto; margin: 2mm; }
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 0; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; }
-  pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
-  img { display: block; max-width: 100%; }
-</style>
-</head>
-<body>${ticketHtml}</body>
-</html>`;
+    const fullHtml = `<!DOCTYPE html><html><head><style>
+      @page { size: 80mm auto; margin: 2mm; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 0; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; }
+      pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
+      img { display: block; max-width: 100%; margin: 0 auto; }
+      div { text-align: center; }
+    </style></head><body>${ticketHtml}</body></html>`;
 
     printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
 
     printWin.webContents.once('did-finish-load', () => {
       printWin.webContents.print(
-        {
-          silent: true,           // No print dialog
-          printBackground: false,
-          deviceName: '',         // Use default printer
-          margins: {
-            marginType: 'custom',
-            top: 0,
-            bottom: 0,
-            left: 2,
-            right: 2
-          },
-          pageSize: {
-            width: 80000,         // 80mm in microns
-            height: 0             // 0 = auto height based on content
-          }
-        },
+        { silent: true, printBackground: false, deviceName: '',
+          margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
+          pageSize: { width: 80000, height: 297000 } },
         (success, errorType) => {
           printWin.destroy();
-          if (success) {
-            resolve({ success: true });
-          } else {
-            console.error('Print error:', errorType);
-            resolve({ success: false, error: errorType });
-          }
+          resolve(success ? { success: true } : { success: false, error: errorType });
         }
       );
     });
+
+    // Timeout fallback
+    setTimeout(() => {
+      if (!printWin.isDestroyed()) {
+        printWin.destroy();
+        resolve({ success: false, error: 'timeout' });
+      }
+    }, 10000);
   });
+}
+
+function createWindow() {
+  const shortcode = getSavedShortcode();
+
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    title: 'GateClerk',
+    backgroundColor: '#0a0a0a',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+      sandbox: false
+    },
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
+    show: false
+  });
+
+  if (shortcode) {
+    mainWindow.loadURL(`https://gateclerk.com/g/${shortcode}`);
+  } else {
+    mainWindow.loadFile(path.join(__dirname, 'setup.html'));
+  }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    require('electron').shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const isGateClerk = url.startsWith('https://gateclerk.com');
+    const isLocal = url.startsWith('file://');
+    if (!isGateClerk && !isLocal) {
+      event.preventDefault();
+    }
+  });
+
+  // ── INTERCEPT CLOSE — print Z-tape then close ──
+  mainWindow.on('close', async (e) => {
+    if (isClosing) return; // Already in close sequence — allow it
+    e.preventDefault();
+    isClosing = true;
+
+    try {
+      // Ask renderer for session data
+      const sessionData = await mainWindow.webContents.executeJavaScript(`
+        (function() {
+          try {
+            const terminalToken = localStorage.getItem('gc_terminal_token');
+            if (!terminalToken) return null; // Not logged into a gate — no Z needed
+
+            const sessionSales = JSON.parse(localStorage.getItem(
+              'gc_session_sales_' + localStorage.getItem('gc_terminal_id') + '_' + new Date().toISOString().split('T')[0]
+            ) || '{}');
+
+            const entries = Object.values(sessionSales);
+            let totalTickets = 0, cashTotal = 0, cardTotal = 0;
+            entries.forEach(s => {
+              totalTickets += (s.cashQty || 0) + (s.cardQty || 0);
+              cashTotal += s.cashTotal || 0;
+              cardTotal += s.cardTotal || 0;
+            });
+
+            return {
+              entries,
+              totalTickets,
+              cashTotal,
+              cardTotal,
+              terminalName: localStorage.getItem('gc_terminal_name') || 'GATE',
+              venueName: localStorage.getItem('gc_terminal_venue_name') || 'GATECLERK',
+              sessionId: localStorage.getItem('gc_gate_session_id'),
+              eventId: window.selectedEventId || null
+            };
+          } catch(e) { return null; }
+        })()
+      `);
+
+      if (sessionData && sessionData.totalTickets >= 0 && sessionData.terminalName) {
+        // Build Z-tape HTML
+        const now = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+        const sessionTotal = sessionData.cashTotal + sessionData.cardTotal;
+
+        function centerText(text, width) {
+          text = String(text).substring(0, width);
+          const pad = Math.max(0, Math.floor((width - text.length) / 2));
+          return ' '.repeat(pad) + text;
+        }
+
+        let ticketLines = '';
+        if (sessionData.entries.length === 0) {
+          ticketLines = '  No sales this session.\n';
+        } else {
+          sessionData.entries.forEach(s => {
+            const qty = (s.cashQty || 0) + (s.cardQty || 0);
+            const total = (s.cashTotal || 0) + (s.cardTotal || 0);
+            ticketLines += `  ${(s.name || 'Ticket').substring(0, 18).padEnd(18)} x${qty}  $${total.toFixed(2)}\n`;
+            if (s.cashQty > 0) ticketLines += `    Cash: ${s.cashQty} tickets  $${(s.cashTotal||0).toFixed(2)}\n`;
+            if (s.cardQty > 0) ticketLines += `    Card: ${s.cardQty} tickets  $${(s.cardTotal||0).toFixed(2)}\n`;
+          });
+        }
+
+        const zLines = [
+          `================================`,
+          centerText('*** Z TAPE ***', 32),
+          centerText('END OF SESSION REPORT', 32),
+          `================================`,
+          centerText(sessionData.venueName, 32),
+          centerText(sessionData.terminalName, 32),
+          `  ${now}`,
+          `================================`,
+          `  TICKET BREAKDOWN`,
+          `================================`,
+          ticketLines.trimEnd(),
+          `================================`,
+          `  TOTAL TICKETS:    ${sessionData.totalTickets}`,
+          `  CASH TOTAL:       $${sessionData.cashTotal.toFixed(2)}`,
+          `  CARD TOTAL:       $${sessionData.cardTotal.toFixed(2)}`,
+          `================================`,
+          centerText('SESSION TOTAL', 32),
+          centerText(`$${sessionTotal.toFixed(2)}`, 32),
+          `================================`,
+          ``, ``, ``, ``
+        ].join('\n');
+
+        // Log session to server via renderer
+        if (sessionData.sessionId) {
+          mainWindow.webContents.executeJavaScript(`
+            fetch('https://gateclerk-api.onrender.com/terminal/logout-session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: '${sessionData.sessionId}',
+                event_id: ${sessionData.eventId ? `'${sessionData.eventId}'` : 'null'},
+                ticket_count: ${sessionData.totalTickets},
+                cash_total: ${sessionData.cashTotal},
+                card_total: ${sessionData.cardTotal}
+              })
+            }).catch(() => {});
+          `).catch(() => {});
+        }
+
+        // Print Z-tape silently
+        await printHtml(`<pre>${zLines}</pre>`);
+      }
+    } catch(err) {
+      console.error('Close Z-tape error:', err);
+    }
+
+    // Clear localStorage
+    mainWindow.webContents.executeJavaScript(`
+      try {
+        const termId = localStorage.getItem('gc_terminal_id');
+        const today = new Date().toISOString().split('T')[0];
+        localStorage.removeItem('gc_session_sales_' + termId + '_' + today);
+        localStorage.removeItem('gc_gate_session_id');
+        localStorage.removeItem('gc_terminal_token');
+        localStorage.removeItem('gc_terminal_id');
+        localStorage.removeItem('gc_terminal_name');
+        localStorage.removeItem('gc_terminal_account_id');
+        localStorage.removeItem('gc_terminal_venue_name');
+        localStorage.removeItem('gc_terminal_logo_url');
+        localStorage.removeItem('gc_terminal_shortcode');
+      } catch(e) {}
+    `).catch(() => {});
+
+    // Now actually close
+    mainWindow.destroy();
+  });
+
+  mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+ipcMain.handle('save-shortcode', (event, shortcode) => {
+  saveShortcode(shortcode);
+  if (mainWindow) { mainWindow.loadURL(`https://gateclerk.com/g/${shortcode}`); }
+  return { success: true };
 });
 
-// ── GET PRINTERS ──
+ipcMain.handle('reset-shortcode', () => {
+  try { fs.unlinkSync(getShortcodePath()); } catch(e) {}
+  if (mainWindow) { mainWindow.loadFile(path.join(__dirname, 'setup.html')); }
+  return { success: true };
+});
+
+ipcMain.handle('get-shortcode', () => { return getSavedShortcode(); });
+
+ipcMain.handle('print-ticket', async (event, ticketHtml) => {
+  return printHtml(ticketHtml);
+});
+
 ipcMain.handle('get-printers', async () => {
   if (!mainWindow) return [];
   const printers = await mainWindow.webContents.getPrintersAsync();
   return printers.map(p => ({ name: p.name, isDefault: p.isDefault }));
 });
 
-// ── APP READY ──
-app.whenReady().then(() => {
-  createWindow();
+// ── IPC: CONFIRM CLOSE (called from renderer after signOut completes) ──
+ipcMain.handle('confirm-close', () => {
+  if (mainWindow) { mainWindow.destroy(); }
+});
 
-  // Check for updates after a short delay (don't block startup)
+app.whenReady().then(() => {
+  session.defaultSession.setPreloads([path.join(__dirname, 'preload.js')]);
+  createWindow();
   setTimeout(() => {
-    autoUpdater.checkForUpdatesAndNotify().catch(err => {
-      console.log('Update check skipped:', err.message);
-    });
+    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
   }, 5000);
 });
 
-// ── SECOND INSTANCE ──
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -166,13 +292,7 @@ app.on('second-instance', () => {
   }
 });
 
-// ── QUIT ──
-app.on('window-all-closed', () => {
-  app.quit();
-});
-
+app.on('window-all-closed', () => { app.quit(); });
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  if (BrowserWindow.getAllWindows().length === 0) { createWindow(); }
 });
