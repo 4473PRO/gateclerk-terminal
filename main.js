@@ -42,7 +42,7 @@ autoUpdater.on('error', (err) => { console.error('Auto-updater error:', err); })
 function printHtml(ticketHtml) {
   return new Promise((resolve) => {
     const printWin = new BrowserWindow({
-      width: 302, height: 800, show: false,
+      width: 400, height: 1200, show: false,
       webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false }
     });
 
@@ -59,9 +59,9 @@ function printHtml(ticketHtml) {
     printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
 
     printWin.webContents.once('did-finish-load', () => {
-      printWin.webContents.executeJavaScript('document.body.scrollHeight').then(contentHeight => {
-        // Convert px to microns (1px = 264.583 microns at 96dpi)
-        const heightMicrons = Math.ceil(contentHeight * 264.583) + 5000; // add 5mm buffer
+      printWin.webContents.executeJavaScript('document.documentElement.scrollHeight').then(contentHeight => {
+        // Convert px to microns at 96dpi, add generous 20mm buffer
+        const heightMicrons = Math.ceil(contentHeight * 264.583) + 20000;
         printWin.webContents.print(
           { silent: true, printBackground: false, deviceName: '',
             margins: { marginType: 'none' },
