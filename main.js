@@ -209,9 +209,10 @@ function printHtml(ticketHtml) {
     printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
 
     printWin.webContents.once('did-finish-load', () => {
-      // Send absolutely minimal print options - let the Star driver handle everything
       printWin.webContents.print(
-        { silent: true, printBackground: false },
+        { silent: true, printBackground: false, deviceName: '',
+          margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
+          pageSize: { width: 80000, height: 297000 } },
         (success, errorType) => {
           printWin.destroy();
           resolve(success ? { success: true } : { success: false, error: errorType });
