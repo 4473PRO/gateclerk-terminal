@@ -192,11 +192,11 @@ function printEscPos(ticketHtml) {
 // ── PRINT FUNCTION (reusable) ──
 function printHtml(ticketHtml) {
   return new Promise((resolve) => {
-    const os = require('os');
-    const path2 = require('path');
-    const { exec } = require('child_process');
+    const printWin = new BrowserWindow({
+      width: 302, height: 1200, show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
+    });
 
-    // Add auto-print script to the HTML
     const fullHtml = `<!DOCTYPE html><html><head><style>
       @page { size: 80mm auto; margin: 0; }
       * { box-sizing: border-box; }
@@ -204,65 +204,27 @@ function printHtml(ticketHtml) {
       pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
       img { display: block; max-width: 100%; margin: 0 auto; }
       div { text-align: center; }
-    </style>
-    <script>window.onload = function() { window.print(); setTimeout(function(){ window.close(); }, 500); };</script>
-    </head><body>${ticketHtml}</body></html>`;
+    </style></head><body>${ticketHtml}</body></html>`;
 
-    const tmpFile = path2.join(os.tmpdir(), 'gc_ticket_' + Date.now() + '.html');
-    fs.writeFileSync(tmpFile, fullHtml, 'utf8');
-    const fileUrl = 'file:///' + tmpFile.replace(/\\/g, '/');
+    printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
 
-    // Find Chrome or Edge
-    const browserPaths = [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    ];
-
-    let browserPath = null;
-    for (const p of browserPaths) {
-      try { if (p && fs.existsSync(p)) { browserPath = p; break; } } catch(e) {}
-    }
-
-    if (browserPath) {
-      // Launch Chrome/Edge in app mode with kiosk-printing
-      // This is IDENTICAL to how the browser shortcut with --kiosk-printing works
-      // The page auto-prints via window.onload then closes itself
-      const cmd = `"${browserPath}" --kiosk-printing --app="${fileUrl}"`;
-      exec(cmd);
-      // Give it time to print then clean up
-      setTimeout(() => {
-        try { fs.unlinkSync(tmpFile); } catch(e) {}
-        resolve({ success: true });
-      }, 5000);
-    } else {
-      // Fallback: Electron webContents.print
-      const printWin = new BrowserWindow({
-        width: 302, height: 1200, show: false,
-        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
-      });
-      printWin.loadFile(tmpFile);
-      printWin.webContents.once('did-finish-load', () => {
-        printWin.webContents.print(
-          { silent: true, printBackground: false, deviceName: '',
-            margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
-            pageSize: { width: 80000, height: 297000 } },
-          (success, errorType) => {
-            printWin.destroy();
-            setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 1000);
-            resolve(success ? { success: true } : { success: false, error: errorType });
-          }
-        );
-      });
-      setTimeout(() => {
-        if (!printWin.isDestroyed()) {
+    printWin.webContents.once('did-finish-load', () => {
+      // Send absolutely minimal print options - let the Star driver handle everything
+      printWin.webContents.print(
+        { silent: true, printBackground: false },
+        (success, errorType) => {
           printWin.destroy();
-          resolve({ success: false, error: 'timeout' });
+          resolve(success ? { success: true } : { success: false, error: errorType });
         }
-      }, 10000);
-    }
+      );
+    });
+
+    setTimeout(() => {
+      if (!printWin.isDestroyed()) {
+        printWin.destroy();
+        resolve({ success: false, error: 'timeout' });
+      }
+    }, 10000);
   });
 }
 
