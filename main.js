@@ -230,7 +230,7 @@ function printHtml(ticketHtml) {
       // Launch Chrome/Edge in app mode with kiosk-printing
       // This is IDENTICAL to how the browser shortcut with --kiosk-printing works
       // The page auto-prints via window.onload then closes itself
-      const cmd = `"${browserPath}" --headless=old --kiosk-printing --disable-gpu --print-to-default-printer "${fileUrl}"`;
+      const cmd = `"${browserPath}" --kiosk-printing --app="${fileUrl}"`;
       exec(cmd);
       // Give it time to print then clean up
       setTimeout(() => {
