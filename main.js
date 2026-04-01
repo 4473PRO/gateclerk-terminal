@@ -42,9 +42,142 @@ autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.on('error', (err) => { console.error('Auto-updater error:', err); });
 
-// ── PRINT FUNCTION (reusable) ──
-function printHtml(ticketHtml) {
+// ── ESC/POS DIRECT USB PRINT ──
+// Sends raw bytes directly to any USB thermal printer
+// No Windows print system, no drivers, no paper size settings needed
+// Works universally on Star, Rongta, Epson, and any 80mm thermal printer
+
+function htmlToText(html) {
+  return html
+    .replace(/<div[^>]*>/gi, '')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<img[^>]*>/gi, '')
+    .replace(/<pre[^>]*>/gi, '')
+    .replace(/<\/pre>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#10;/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function buildEscPos(text) {
+  const ESC = 0x1B;
+  const GS  = 0x1D;
+  const LF  = 0x0A;
+
+  const bytes = [];
+
+  // Initialize printer
+  bytes.push(ESC, 0x40);
+
+  // Set character encoding to PC437
+  bytes.push(ESC, 0x74, 0x00);
+
+  // Normal mode
+  bytes.push(ESC, 0x21, 0x00);
+
+  // Print each line
+  const lines = text.split('\n');
+  for (const line of lines) {
+    // Encode line as ASCII bytes
+    for (let i = 0; i < line.length; i++) {
+      const c = line.charCodeAt(i);
+      bytes.push(c < 128 ? c : 0x3F); // Replace non-ASCII with ?
+    }
+    bytes.push(LF);
+  }
+
+  // Feed 4 lines and cut
+  bytes.push(LF, LF, LF, LF);
+  bytes.push(GS, 0x56, 0x41, 0x03); // Partial cut
+
+  return Buffer.from(bytes);
+}
+
+function printEscPos(ticketHtml) {
   return new Promise((resolve) => {
+    try {
+      const usb = require('usb');
+      const text = htmlToText(ticketHtml);
+      const data = buildEscPos(text);
+
+      // Find first USB thermal printer
+      // Thermal printers use USB class 0x07 (Printer class)
+      const devices = usb.getDeviceList();
+      let printer = null;
+
+      for (const device of devices) {
+        try {
+          device.open();
+          const interfaces = device.interfaces || [];
+          for (const iface of interfaces) {
+            if (iface.descriptor.bInterfaceClass === 0x07) {
+              printer = { device, iface };
+              break;
+            }
+          }
+          if (printer) break;
+          device.close();
+        } catch(e) {}
+      }
+
+      if (!printer) {
+        resolve({ success: false, error: 'No USB printer found' });
+        return;
+      }
+
+      const { device, iface } = printer;
+
+      try {
+        if (iface.isKernelDriverActive()) {
+          iface.detachKernelDriver();
+        }
+      } catch(e) {}
+
+      iface.claim();
+
+      // Find bulk OUT endpoint
+      const endpoint = iface.endpoints.find(e => 
+        e.direction === 'out' && e.transferType === 2
+      );
+
+      if (!endpoint) {
+        iface.release(() => device.close());
+        resolve({ success: false, error: 'No OUT endpoint found' });
+        return;
+      }
+
+      endpoint.transfer(data, (err) => {
+        try {
+          iface.release(() => { try { device.close(); } catch(e) {} });
+        } catch(e) {}
+        resolve(err ? { success: false, error: err.message } : { success: true });
+      });
+
+    } catch(e) {
+      // usb module not available — fall back to Electron print
+      resolve({ success: false, error: 'usb_unavailable' });
+    }
+  });
+}
+
+// ── PRINT FUNCTION (reusable) ──
+// Tries ESC/POS direct USB first, falls back to Electron print
+function printHtml(ticketHtml) {
+  return new Promise(async (resolve) => {
+    // Try ESC/POS direct USB first
+    const escResult = await printEscPos(ticketHtml);
+    if (escResult.success) {
+      resolve(escResult);
+      return;
+    }
+
+    // Fallback: Electron webContents.print
     const printWin = new BrowserWindow({
       width: 400, height: 600, show: false,
       webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }

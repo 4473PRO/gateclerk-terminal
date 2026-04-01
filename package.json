@@ -28,7 +28,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
@@ -51,6 +53,7 @@
     "pdf-to-printer": "^5.4.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1"
   }
