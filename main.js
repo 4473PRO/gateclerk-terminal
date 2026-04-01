@@ -193,7 +193,7 @@ function printEscPos(ticketHtml) {
 function printHtml(ticketHtml) {
   return new Promise((resolve) => {
     const printWin = new BrowserWindow({
-      width: 302, height: 1200, show: false,
+      width: 575, height: 1200, show: false,
       webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
     });
 
@@ -210,7 +210,7 @@ function printHtml(ticketHtml) {
 
     printWin.webContents.once('did-finish-load', () => {
       printWin.webContents.print(
-        { silent: true, printBackground: false, deviceName: '',
+        { silent: false, printBackground: false, deviceName: '',
           margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
           pageSize: { width: 80000, height: 297000 } },
         (success, errorType) => {

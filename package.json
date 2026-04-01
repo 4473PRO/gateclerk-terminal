@@ -1,6 +1,6 @@
 {
   "name": "gateclerk-terminal",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "description": "GateClerk Gate Terminal",
   "main": "main.js",
   "scripts": {
@@ -12,7 +12,7 @@
   "build": {
     "appId": "com.gateclerk.terminal",
     "productName": "GateClerk",
-    "copyright": "Copyright Ãƒâ€šÃ‚Â© 2026 StormPay Inc.",
+    "copyright": "Copyright ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© 2026 StormPay Inc.",
     "directories": {
       "output": "dist"
     },
