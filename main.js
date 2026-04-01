@@ -102,12 +102,48 @@ function buildEscPos(text) {
 function printEscPos(ticketHtml) {
   return new Promise((resolve) => {
     try {
-      const usb = require('usb');
       const text = htmlToText(ticketHtml);
       const data = buildEscPos(text);
+      const { exec } = require('child_process');
+      const os = require('os');
+      const path2 = require('path');
 
-      // Find first USB thermal printer
-      // Thermal printers use USB class 0x07 (Printer class)
+      // On Windows, try writing ESC/POS to USB printer ports directly
+      // This works with SMJUSB (Star), standard USB printer ports, and COM ports
+      if (process.platform === 'win32') {
+        // Write ESC/POS data to a temp file
+        const tmpFile = path2.join(os.tmpdir(), 'gateclerk_escpos_' + Date.now() + '.bin');
+        fs.writeFileSync(tmpFile, data);
+
+        // Try each possible printer port — USB001, USB002, COM3, COM4, etc.
+        const ports = ['USB001', 'USB002', 'USB003', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6'];
+        let tried = 0;
+        let succeeded = false;
+
+        const tryNextPort = (index) => {
+          if (index >= ports.length || succeeded) {
+            try { fs.unlinkSync(tmpFile); } catch(e) {}
+            resolve(succeeded ? { success: true } : { success: false, error: 'no_port' });
+            return;
+          }
+
+          exec(`copy /b "${tmpFile}" "\\\\.\\${ports[index]}"`, (error) => {
+            if (!error) {
+              succeeded = true;
+              try { fs.unlinkSync(tmpFile); } catch(e) {}
+              resolve({ success: true });
+            } else {
+              tryNextPort(index + 1);
+            }
+          });
+        };
+
+        tryNextPort(0);
+        return;
+      }
+
+      // Non-Windows: use usb package
+      const usb = require('usb');
       const devices = usb.getDeviceList();
       let printer = null;
 
@@ -132,20 +168,10 @@ function printEscPos(ticketHtml) {
       }
 
       const { device, iface } = printer;
-
-      try {
-        if (iface.isKernelDriverActive()) {
-          iface.detachKernelDriver();
-        }
-      } catch(e) {}
-
+      try { if (iface.isKernelDriverActive()) iface.detachKernelDriver(); } catch(e) {}
       iface.claim();
 
-      // Find bulk OUT endpoint
-      const endpoint = iface.endpoints.find(e => 
-        e.direction === 'out' && e.transferType === 2
-      );
-
+      const endpoint = iface.endpoints.find(e => e.direction === 'out' && e.transferType === 2);
       if (!endpoint) {
         iface.release(() => device.close());
         resolve({ success: false, error: 'No OUT endpoint found' });
@@ -153,14 +179,11 @@ function printEscPos(ticketHtml) {
       }
 
       endpoint.transfer(data, (err) => {
-        try {
-          iface.release(() => { try { device.close(); } catch(e) {} });
-        } catch(e) {}
+        try { iface.release(() => { try { device.close(); } catch(e) {} }); } catch(e) {}
         resolve(err ? { success: false, error: err.message } : { success: true });
       });
 
     } catch(e) {
-      // usb module not available — fall back to Electron print
       resolve({ success: false, error: 'usb_unavailable' });
     }
   });
