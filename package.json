@@ -1,6 +1,6 @@
 {
   "name": "gateclerk-terminal",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "GateClerk Gate Terminal",
   "main": "main.js",
   "scripts": {
