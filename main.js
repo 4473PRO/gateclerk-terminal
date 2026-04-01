@@ -190,43 +190,66 @@ function printEscPos(ticketHtml) {
 }
 
 // ── PRINT FUNCTION (reusable) ──
-// Tries ESC/POS direct USB first, falls back to Electron print
 function printHtml(ticketHtml) {
-  return new Promise(async (resolve) => {
-    // Try ESC/POS direct USB first
-    const escResult = await printEscPos(ticketHtml);
-    if (escResult.success) {
-      resolve(escResult);
-      return;
-    }
-
-    // Fallback: Electron webContents.print
-    const printWin = new BrowserWindow({
-      width: 400, height: 600, show: false,
-      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
-    });
+  return new Promise((resolve) => {
 
     const fullHtml = `<!DOCTYPE html><html><head><style>
-      @page { size: 80mm auto; margin: 2mm; }
+      @page { size: 80mm auto; margin: 0; }
       * { box-sizing: border-box; }
-      body { margin: 0; padding: 0; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; }
+      body { margin: 0; padding: 2mm; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; width: 72mm; }
       pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
       img { display: block; max-width: 100%; margin: 0 auto; }
       div { text-align: center; }
     </style></head><body>${ticketHtml}</body></html>`;
 
+    // Use a window that matches 80mm at 96dpi = 302px
+    const printWin = new BrowserWindow({
+      width: 302, height: 1200, show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
+    });
+
     printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
 
     printWin.webContents.once('did-finish-load', () => {
-      printWin.webContents.print(
-        { silent: true, printBackground: false, deviceName: '',
-          margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
-          pageSize: { width: 80000, height: 297000 } },
-        (success, errorType) => {
-          printWin.destroy();
-          resolve(success ? { success: true } : { success: false, error: errorType });
-        }
-      );
+      // Measure content height accounting for device pixel ratio (DPI scaling)
+      printWin.webContents.executeJavaScript(`
+        (function() {
+          document.body.offsetHeight;
+          const body = document.body;
+          const html = document.documentElement;
+          const heightPx = Math.max(
+            body.scrollHeight, body.offsetHeight,
+            html.clientHeight, html.scrollHeight, html.offsetHeight
+          );
+          // Normalize to 100% scale — divide by devicePixelRatio
+          const dpr = window.devicePixelRatio || 1;
+          return { heightPx, dpr, normalizedPx: heightPx / dpr };
+        })()
+      `).then(result => {
+        // Use normalized height (independent of display scaling)
+        // 96 DPI: 1px = 264.583 microns. Add 25mm buffer for cut.
+        const heightMicrons = Math.ceil(result.normalizedPx * 264.583) + 25000;
+
+        printWin.webContents.print(
+          { silent: true, printBackground: false, deviceName: '',
+            margins: { marginType: 'none' },
+            pageSize: { width: 80000, height: heightMicrons } },
+          (success, errorType) => {
+            printWin.destroy();
+            resolve(success ? { success: true } : { success: false, error: errorType });
+          }
+        );
+      }).catch(() => {
+        printWin.webContents.print(
+          { silent: true, printBackground: false, deviceName: '',
+            margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
+            pageSize: { width: 80000, height: 297000 } },
+          (success, errorType) => {
+            printWin.destroy();
+            resolve(success ? { success: true } : { success: false, error: errorType });
+          }
+        );
+      });
     });
 
     setTimeout(() => {
@@ -234,7 +257,7 @@ function printHtml(ticketHtml) {
         printWin.destroy();
         resolve({ success: false, error: 'timeout' });
       }
-    }, 10000);
+    }, 15000);
   });
 }
 
