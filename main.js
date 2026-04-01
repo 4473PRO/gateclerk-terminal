@@ -192,7 +192,11 @@ function printEscPos(ticketHtml) {
 // ── PRINT FUNCTION (reusable) ──
 function printHtml(ticketHtml) {
   return new Promise((resolve) => {
+    const os = require('os');
+    const path2 = require('path');
+    const { exec } = require('child_process');
 
+    // Add auto-print script to the HTML
     const fullHtml = `<!DOCTYPE html><html><head><style>
       @page { size: 80mm auto; margin: 0; }
       * { box-sizing: border-box; }
@@ -200,64 +204,65 @@ function printHtml(ticketHtml) {
       pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
       img { display: block; max-width: 100%; margin: 0 auto; }
       div { text-align: center; }
-    </style></head><body>${ticketHtml}</body></html>`;
+    </style>
+    <script>window.onload = function() { window.print(); setTimeout(function(){ window.close(); }, 500); };</script>
+    </head><body>${ticketHtml}</body></html>`;
 
-    // Use a window that matches 80mm at 96dpi = 302px
-    const printWin = new BrowserWindow({
-      width: 302, height: 1200, show: false,
-      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
-    });
+    const tmpFile = path2.join(os.tmpdir(), 'gc_ticket_' + Date.now() + '.html');
+    fs.writeFileSync(tmpFile, fullHtml, 'utf8');
+    const fileUrl = 'file:///' + tmpFile.replace(/\\/g, '/');
 
-    printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
+    // Find Chrome or Edge
+    const browserPaths = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    ];
 
-    printWin.webContents.once('did-finish-load', () => {
-      // Measure content height accounting for device pixel ratio (DPI scaling)
-      printWin.webContents.executeJavaScript(`
-        (function() {
-          document.body.offsetHeight;
-          const body = document.body;
-          const html = document.documentElement;
-          const heightPx = Math.max(
-            body.scrollHeight, body.offsetHeight,
-            html.clientHeight, html.scrollHeight, html.offsetHeight
-          );
-          // Normalize to 100% scale — divide by devicePixelRatio
-          const dpr = window.devicePixelRatio || 1;
-          return { heightPx, dpr, normalizedPx: heightPx / dpr };
-        })()
-      `).then(result => {
-        // Use normalized height (independent of display scaling)
-        // 96 DPI: 1px = 264.583 microns. Add 25mm buffer for cut.
-        const heightMicrons = Math.ceil(result.normalizedPx * 264.583) + 25000;
+    let browserPath = null;
+    for (const p of browserPaths) {
+      try { if (p && fs.existsSync(p)) { browserPath = p; break; } } catch(e) {}
+    }
 
-        printWin.webContents.print(
-          { silent: true, printBackground: false, deviceName: '',
-            margins: { marginType: 'none' },
-            pageSize: { width: 80000, height: heightMicrons } },
-          (success, errorType) => {
-            printWin.destroy();
-            resolve(success ? { success: true } : { success: false, error: errorType });
-          }
-        );
-      }).catch(() => {
+    if (browserPath) {
+      // Launch Chrome/Edge in app mode with kiosk-printing
+      // This is IDENTICAL to how the browser shortcut with --kiosk-printing works
+      // The page auto-prints via window.onload then closes itself
+      const cmd = `"${browserPath}" --kiosk-printing --app="${fileUrl}"`;
+      exec(cmd);
+      // Give it time to print then clean up
+      setTimeout(() => {
+        try { fs.unlinkSync(tmpFile); } catch(e) {}
+        resolve({ success: true });
+      }, 5000);
+    } else {
+      // Fallback: Electron webContents.print
+      const printWin = new BrowserWindow({
+        width: 302, height: 1200, show: false,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
+      });
+      printWin.loadFile(tmpFile);
+      printWin.webContents.once('did-finish-load', () => {
         printWin.webContents.print(
           { silent: true, printBackground: false, deviceName: '',
             margins: { marginType: 'custom', top: 0, bottom: 0, left: 2, right: 2 },
             pageSize: { width: 80000, height: 297000 } },
           (success, errorType) => {
             printWin.destroy();
+            setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 1000);
             resolve(success ? { success: true } : { success: false, error: errorType });
           }
         );
       });
-    });
-
-    setTimeout(() => {
-      if (!printWin.isDestroyed()) {
-        printWin.destroy();
-        resolve({ success: false, error: 'timeout' });
-      }
-    }, 15000);
+      setTimeout(() => {
+        if (!printWin.isDestroyed()) {
+          printWin.destroy();
+          resolve({ success: false, error: 'timeout' });
+        }
+      }, 10000);
+    }
   });
 }
 
