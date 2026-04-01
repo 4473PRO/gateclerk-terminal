@@ -1,12 +1,13 @@
 {
   "name": "gateclerk-terminal",
-  "version": "1.0.12",
+  "version": "1.0.1",
   "description": "GateClerk Gate Terminal",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win --x64",
-    "build:unsigned": "electron-builder --win --x64"
+    "rebuild": "electron-rebuild -f -w usb",
+    "build": "npm run rebuild && electron-builder --win --x64",
+    "build:unsigned": "npm run rebuild && electron-builder --win --x64"
   },
   "build": {
     "appId": "com.gateclerk.terminal",
@@ -50,10 +51,10 @@
   },
   "dependencies": {
     "electron-updater": "^6.1.7",
-    "pdf-to-printer": "^5.4.0"
+    "usb": "^2.11.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.0.3",
+    "@electron/rebuild": "^3.7.2",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1"
   }
