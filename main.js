@@ -49,33 +49,57 @@ function printHtml(ticketHtml) {
     const path2 = require('path');
     const { exec } = require('child_process');
 
-    // Extract plain text from ticketHtml for direct Windows GDI printing
-    // This matches how TicketMaker (VB6/Access) prints - pure Windows GDI, no browser engine
-    const plainText = ticketHtml
-      .replace(/<div[^>]*>/gi, '')
-      .replace(/<\/div>/gi, '\n')
-      .replace(/<img[^>]*>/gi, '')
-      .replace(/<pre[^>]*>/gi, '')
-      .replace(/<\/pre>/gi, '')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&#10;/g, '\n');
+    const fullHtml = `<!DOCTYPE html><html><head><style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body { padding: 2mm; font-family: monospace; font-size: 12px; font-weight: bold; line-height: 1.45; color: #000; background: #fff; }
+      pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-word; }
+      img { display: block; max-width: 100%; margin: 0 auto; }
+      div { text-align: center; }
+    </style></head><body>${ticketHtml}</body></html>`;
 
-    const tmpFile = path2.join(os.tmpdir(), 'gateclerk_print_' + Date.now() + '.txt');
-    fs.writeFileSync(tmpFile, plainText + '\r\n\r\n\r\n\r\n', 'utf8');
+    const tmpFile = path2.join(os.tmpdir(), 'gateclerk_print_' + Date.now() + '.html');
+    fs.writeFileSync(tmpFile, fullHtml, 'utf8');
 
-    // Print text file directly via Windows print command — pure GDI, no browser
-    // Same print path as VB6/Access applications like TicketMaker
-    exec(`print /D:"${require('os').hostname()}" "${tmpFile}"`, (error) => {
-      // Also try without hostname if that fails
-      if (error) {
-        exec(`print "${tmpFile}"`, () => {});
-      }
-      setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 8000);
-      resolve({ success: true });
-    });
+    const chromePaths = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    ];
+
+    let browserPath = null;
+    for (const p of chromePaths) {
+      try { if (p && fs.existsSync(p)) { browserPath = p; break; } } catch(e) {}
+    }
+
+    if (browserPath) {
+      // Use --kiosk-printing which is exactly what Chrome kiosk mode uses
+      // This uses the Windows default printer with its own paper size settings
+      const cmd = `"${browserPath}" --kiosk-printing --headless=new --disable-gpu --print-to-default-printer "file:///${tmpFile.replace(/\\/g, '/')}"`;
+      exec(cmd, (error) => {
+        setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 8000);
+        resolve({ success: true });
+      });
+    } else {
+      // Electron fallback
+      const printWin = new BrowserWindow({
+        width: 400, height: 1200, show: false,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, webSecurity: false }
+      });
+      printWin.loadFile(tmpFile);
+      printWin.webContents.once('did-finish-load', () => {
+        printWin.webContents.print(
+          { silent: true, printBackground: false, deviceName: '', margins: { marginType: 'none' } },
+          (success, errorType) => {
+            printWin.destroy();
+            setTimeout(() => { try { fs.unlinkSync(tmpFile); } catch(e) {} }, 2000);
+            resolve(success ? { success: true } : { success: false, error: errorType });
+          }
+        );
+      });
+    }
   });
 }
 
